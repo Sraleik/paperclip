@@ -24949,8 +24949,11 @@ export function heartbeatService(
           }
           const livenessRun = finalizedRun;
           await refreshContinuationSummaryForRun(livenessRun, agent);
+          const livenessContext = parseObject(livenessRun.contextSnapshot);
           const skipRunIssueComment =
-            parseObject(livenessRun.contextSnapshot).skipIssueComment === true;
+            livenessContext.skipIssueComment === true ||
+            (livenessContext.wakeReason === "issue_comment_mentioned" &&
+              issueContext?.assigneeAgentId !== agent.id);
           let resolvedPresentationDecision: RunPresentationDecision | null =
             null;
           try {

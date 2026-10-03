@@ -4844,6 +4844,7 @@ describe("IssueChatThread", () => {
     );
     const caret = label?.nextElementSibling;
     expect(caret?.tagName.toLowerCase()).toBe("svg");
+    expect(header?.classList.contains("group")).toBe(true);
     expect(caret?.classList.contains("opacity-0")).toBe(true);
     expect(caret?.classList.contains("group-hover:opacity-100")).toBe(true);
     expect(caret?.classList.contains("group-focus-visible:opacity-100")).toBe(true);

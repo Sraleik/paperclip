@@ -8,5 +8,7 @@ préfixe `patch:`. À rebaser sur chaque nouveau tag stable (rerere activé).
 | 1 | Rotation des identifiants Claude depuis un fichier : le CLI réécrit le jeton court au lieu qu'il gèle en variable d'env | #13726 | ouverte, non fusionnée au 2026-10-03 |
 | 2 | claude-local charge les skills avec une connexion IA gérée | #14341 | ouverte, non fusionnée au 2026-10-03 |
 | 3 | Une mention sur le ticket d'un autre agent ne publie plus d'office le message final du run (`skipRunIssueComment` vrai si `issue_comment_mentioned` et assigné ≠ agent) | aucune | à proposer en amont |
+| 4 | `paperclipai install --repo` : prépare `ui-dist` du paquet à `bundleDependencies` (serveur) avant `prepare-bundled-package.mjs`, qui ne lance pas le prepack (ENOENT `server/ui-dist`) | aucune | à proposer en amont |
 
 Test du patch 3 : `server/src/__tests__/heartbeat-mention-comment-suppression.test.ts`.
+Test du patch 4 : `cli/src/__tests__/install-command.test.ts` (« prepares ui-dist for a bundled package… »).

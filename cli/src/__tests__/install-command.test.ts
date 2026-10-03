@@ -105,7 +105,7 @@ describe("managed install commands", () => {
     expect(runCommand.mock.calls[0]?.[0]).toBe(process.execPath);
   });
 
-  const createGitCheckoutRunCommand = (sha: string) =>
+  const createGitCheckoutRunCommand = (sha: string, { bundledNeedsUiDist = false } = {}) =>
     vi.fn(async (file: string, args: string[], _options?: Parameters<CommandRunner>[2]) => {
       if (file === "curl" && !args.includes("--output")) return { stdout: JSON.stringify({ sha }), stderr: "" };
       if (file === "curl") { fs.writeFileSync(args[args.indexOf("--output") + 1], "archive"); return { stdout: "", stderr: "" }; }
@@ -113,7 +113,7 @@ describe("managed install commands", () => {
         const checkout = args[args.indexOf("-C") + 1];
         const packages = [
           { dir: "packages/shared", name: "@paperclipai/shared", packageJson: { name: "@paperclipai/shared", version: "0.3.1" } },
-          { dir: "packages/db", name: "@paperclipai/db", packageJson: { name: "@paperclipai/db", version: "0.3.1", dependencies: { "@paperclipai/shared": "workspace:*" }, bundleDependencies: ["embedded-postgres"] } },
+          { dir: "packages/db", name: "@paperclipai/db", packageJson: { name: "@paperclipai/db", version: "0.3.1", dependencies: { "@paperclipai/shared": "workspace:*" }, bundleDependencies: ["embedded-postgres"], ...(bundledNeedsUiDist ? { files: ["ui-dist"], scripts: { "prepare:ui-dist": "bash ../scripts/prepare-server-ui-dist.sh" } } : {}) } },
           { dir: "server", name: "@paperclipai/server", packageJson: { name: "@paperclipai/server", version: "0.3.1", dependencies: { "@paperclipai/db": "workspace:*" } } },
         ];
         fs.mkdirSync(path.join(checkout, "cli"), { recursive: true });
@@ -127,6 +127,10 @@ describe("managed install commands", () => {
         return { stdout: "", stderr: "" };
       }
       if (file === "corepack") {
+        if (args.includes("prepare:ui-dist")) {
+          fs.mkdirSync(path.join(_options?.cwd as string, args[args.indexOf("--dir") + 1]!, "ui-dist"), { recursive: true });
+          return { stdout: "", stderr: "" };
+        }
         if (args.includes("pack")) {
           const destination = args[args.indexOf("--pack-destination") + 1];
           const packageDir = args[args.indexOf("--dir") + 1];
@@ -143,6 +147,10 @@ describe("managed install commands", () => {
       }
       if (file === "npm" && args[0] === "install") { const prefix = args[args.indexOf("--prefix") + 1]; const packageRoot = path.join(prefix, "node_modules", "paperclipai"); fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true }); fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version: "0.3.1" })); fs.writeFileSync(path.join(packageRoot, "dist", "index.js"), "#!/usr/bin/env node\n"); return { stdout: "", stderr: "" }; }
       if (file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs")) {
+        const sourcePackage = JSON.parse(fs.readFileSync(path.join(args[1]!, "package.json"), "utf8")) as { files?: string[] };
+        for (const entry of sourcePackage.files ?? []) {
+          if (!fs.existsSync(path.join(args[1]!, entry))) throw new Error(`ENOENT lstat ${path.join(args[1]!, entry)}`);
+        }
         fs.mkdirSync(args[2], { recursive: true });
         fs.writeFileSync(path.join(args[2], "package.json"), JSON.stringify({ name: "@paperclipai/db", version: "0.3.1" }));
         return { stdout: "", stderr: "" };
@@ -186,6 +194,16 @@ describe("managed install commands", () => {
     }
     const uiPackCall = buildCalls.find(([file, , options]) => file === "corepack" && options?.env?.PAPERCLIP_RELEASE_REUSE_UI_DIST === "1");
     expect(uiPackCall).toBeDefined();
+  });
+
+  // Cas vécu : le paquet serveur (bundleDependencies) est empaqueté par prepare-bundled-package.mjs,
+  // qui copie `files` sans lancer le prepack ; ui-dist n'existait donc jamais (ENOENT sur rise).
+  it("prepares ui-dist for a bundled package before copying its files", async () => {
+    const sha = "e".repeat(40);
+    const runCommand = createGitCheckoutRunCommand(sha, { bundledNeedsUiDist: true });
+    await expect(installGitPayload("paperclipai/paperclip", sha, runCommand, resolveInstallStorePaths())).resolves.toMatchObject({ version: "0.3.1", reused: false });
+    const prepareCall = runCommand.mock.calls.find(([file, args]) => file === "corepack" && args.includes("prepare:ui-dist"));
+    expect(prepareCall?.[2]?.env?.PAPERCLIP_RELEASE_REUSE_UI_DIST).toBe("1");
   });
 
   it("resolves the complete server workspace dependency closure in dependency order", () => {

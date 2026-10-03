@@ -4643,6 +4643,11 @@ export function companySkillService(db: Db) {
       for (const slug of [...new Set([initial.slug, ...additionalSlugs])].filter(Boolean).sort()) {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${companyId}:${slug}`}, 0))`);
       }
+      await tx.execute(sql`
+        select ${companySkills.id} from ${companySkills}
+        where ${companySkills.id} = ${skillId} and ${companySkills.companyId} = ${companyId}
+        for update
+      `);
       const skill = await getById(companyId, skillId, tx);
       if (!skill) throw notFound("Skill not found");
       if (skill.slug !== initial.slug) throw conflict("Skill was renamed. Retry the operation.");
@@ -4670,7 +4675,8 @@ export function companySkillService(db: Db) {
     content: string,
     actor: SkillActor | null = null,
     format: { encoding?: "utf8" | "base64"; executable?: boolean; expectedVersionId?: string | null;
-      afterUpdate?: (versionId: string | null) => Promise<void> } = {},
+      afterUpdate?: (versionId: string | null) => Promise<void>;
+      onRollback?: (restore: () => Promise<void>) => void } = {},
   ): Promise<CompanySkillFileDetail> {
     return withSkillFileMutation(companyId, skillId, async (skill, tx) => {
 
@@ -4694,6 +4700,14 @@ export function companySkillService(db: Db) {
       }
       const previousContent = await fs.readFile(absolutePath).catch(() => null);
       const previousMode = (await fs.stat(absolutePath).catch(() => null))?.mode ?? 0o644;
+      const restore = async () => {
+        if (previousContent === null) await fs.rm(absolutePath, { force: true });
+        else {
+          await fs.writeFile(absolutePath, previousContent);
+          await fs.chmod(absolutePath, previousMode);
+        }
+      };
+      format.onRollback?.(restore);
       const mode = (format.executable ?? Boolean(previousMode & 0o111)) ? 0o755 : 0o644;
       try {
         await fs.mkdir(path.dirname(absolutePath), { recursive: true });
@@ -4732,11 +4746,7 @@ export function companySkillService(db: Db) {
         await format.afterUpdate?.(updated?.currentVersionId ?? null);
         return detail;
       } catch (error) {
-        if (previousContent === null) await fs.rm(absolutePath, { force: true });
-        else {
-          await fs.writeFile(absolutePath, previousContent);
-          await fs.chmod(absolutePath, previousMode);
-        }
+        await restore();
         throw error;
       }
     });

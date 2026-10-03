@@ -4669,9 +4669,14 @@ export function companySkillService(db: Db) {
     relativePath: string,
     content: string,
     actor: SkillActor | null = null,
-    format: { encoding?: "utf8" | "base64"; executable?: boolean } = {},
+    format: { encoding?: "utf8" | "base64"; executable?: boolean; expectedVersionId?: string | null;
+      afterUpdate?: (versionId: string | null) => Promise<void> } = {},
   ): Promise<CompanySkillFileDetail> {
     return withSkillFileMutation(companyId, skillId, async (skill, tx) => {
+
+      if (format.expectedVersionId !== undefined && skill.currentVersionId !== format.expectedVersionId) {
+        throw conflict("Skill version changed. Read the current version before retrying.");
+      }
 
       const source = deriveSkillSourceInfo(skill);
       if (!source.editable || skill.sourceType !== "local_path") {
@@ -4690,40 +4695,50 @@ export function companySkillService(db: Db) {
       const previousContent = await fs.readFile(absolutePath).catch(() => null);
       const previousMode = (await fs.stat(absolutePath).catch(() => null))?.mode ?? 0o644;
       const mode = (format.executable ?? Boolean(previousMode & 0o111)) ? 0o755 : 0o644;
-      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-      await fs.writeFile(absolutePath, bytes);
-      await fs.chmod(absolutePath, mode);
+      try {
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await fs.writeFile(absolutePath, bytes);
+        await fs.chmod(absolutePath, mode);
 
-      if (normalizedPath === "SKILL.md") {
-        const parsed = parseFrontmatterMarkdown(content);
-        await tx
-          .update(companySkills)
-          .set({
-            name: asString(parsed.frontmatter.name) ?? skill.name,
-            description: asString(parsed.frontmatter.description) ?? skill.description,
-            markdown: content,
-            ...readSkillStoreMetadata(parsed.frontmatter, skill.metadata),
-            updatedAt: new Date(),
-          })
-          .where(eq(companySkills.id, skill.id));
-      } else {
-        await tx
-          .update(companySkills)
-          .set({ updatedAt: new Date() })
-          .where(eq(companySkills.id, skill.id));
+        if (normalizedPath === "SKILL.md") {
+          const parsed = parseFrontmatterMarkdown(content);
+          await tx
+            .update(companySkills)
+            .set({
+              name: asString(parsed.frontmatter.name) ?? skill.name,
+              description: asString(parsed.frontmatter.description) ?? skill.description,
+              markdown: content,
+              ...readSkillStoreMetadata(parsed.frontmatter, skill.metadata),
+              updatedAt: new Date(),
+            })
+            .where(eq(companySkills.id, skill.id));
+        } else {
+          await tx
+            .update(companySkills)
+            .set({ updatedAt: new Date() })
+            .where(eq(companySkills.id, skill.id));
+        }
+
+        const inventory = await refreshEditedSkillInventory(skill, tx);
+        if (!previousContent?.equals(bytes) || Boolean(previousMode & 0o111) !== Boolean(mode & 0o111)) {
+          await createVersion(companyId, skillId, {}, actor, {
+            database: tx, skipInventoryRefresh: true, skill, fileInventory: inventory,
+          });
+        }
+
+        const updated = await getById(companyId, skillId, tx);
+        const detail = updated ? await readLoadedSkillFile(updated, normalizedPath) : null;
+        if (!detail) throw notFound("Skill file not found");
+        await format.afterUpdate?.(updated?.currentVersionId ?? null);
+        return detail;
+      } catch (error) {
+        if (previousContent === null) await fs.rm(absolutePath, { force: true });
+        else {
+          await fs.writeFile(absolutePath, previousContent);
+          await fs.chmod(absolutePath, previousMode);
+        }
+        throw error;
       }
-
-      const inventory = await refreshEditedSkillInventory(skill, tx);
-      if (!previousContent?.equals(bytes) || Boolean(previousMode & 0o111) !== Boolean(mode & 0o111)) {
-        await createVersion(companyId, skillId, {}, actor, {
-          database: tx, skipInventoryRefresh: true, skill, fileInventory: inventory,
-        });
-      }
-
-      const updated = await getById(companyId, skillId, tx);
-      const detail = updated ? await readLoadedSkillFile(updated, normalizedPath) : null;
-      if (!detail) throw notFound("Skill file not found");
-      return detail;
     });
   }
 

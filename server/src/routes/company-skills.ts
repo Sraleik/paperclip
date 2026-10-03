@@ -1219,13 +1219,53 @@ export function companySkillRoutes(db: Db) {
       const companyId = req.params.companyId as string;
       const skillId = req.params.skillId as string;
       await assertCanMutateCompanySkills(req, companyId, "skills.edit", () => skillPolicyResource({ companyId, skillId }));
+      const { idempotencyKey, expectedVersionId, ...input } = req.body;
+      if (idempotencyKey) {
+        const actor = getActorInfo(req);
+        const runContext = req.actor.type === "agent" && req.actor.source === "agent_jwt" && req.actor.runId
+          ? await projectToolContext(db, req.actor, true, "Skill") : null;
+        const receiptKey = `skill-file:${companyId}:${actor.actorId}:${runContext?.issue.id ?? "board"}:${skillId}:${idempotencyKey}`;
+        const fingerprint = createHash("sha256").update(JSON.stringify({ ...input, expectedVersionId })).digest("hex");
+        const outcome = await db.transaction(async tx => {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${receiptKey}, 0))`);
+          if (runContext) await projectToolContext(tx as unknown as Db, req.actor, true, "Skill");
+          const [prior] = await tx.select().from(activityLog).where(and(
+            eq(activityLog.companyId, companyId), eq(activityLog.action, "company.skill_file_updated"),
+            sql`${activityLog.details}->>'idempotencyKey' = ${receiptKey}`,
+          ));
+          if (prior) {
+            if (prior.details?.fingerprint !== fingerprint) throw conflict("Skill file idempotency key was used with different inputs");
+            return { receipt: prior.details?.receipt, publication: null };
+          }
+          let publication: ActivityPublication | null = null;
+          let receipt: { skillId: string; path: string; versionId: string | null; studioPath: string } | null = null;
+          await companySkillService(tx as unknown as Db).updateFile(companyId, skillId, input.path, input.content, skillActor(req), {
+            encoding: input.encoding, executable: input.executable, expectedVersionId,
+            afterUpdate: async (versionId) => {
+              receipt = { skillId, path: input.path, versionId, studioPath: `/skills/studio/${encodeURIComponent(skillId)}` };
+              const activity = await persistActivity(tx as unknown as Db, {
+                companyId, actorType: actor.actorType, actorId: actor.actorId, agentId: actor.agentId,
+                runId: actor.runId, agentApiKeyId: actor.agentApiKeyId, issueId: runContext?.issue.id,
+                action: "company.skill_file_updated", entityType: "company_skill", entityId: skillId,
+                details: { path: input.path, markdown: input.path === "SKILL.md", versionId,
+                  sourceIssueId: runContext?.issue.id ?? null, idempotencyKey: receiptKey, fingerprint, receipt },
+              });
+              publication = activity.publication;
+            },
+          });
+          return { receipt, publication };
+        });
+        if (outcome.publication) publishActivity(outcome.publication);
+        res.json(outcome.receipt);
+        return;
+      }
       const result = await svc.updateFile(
         companyId,
         skillId,
         String(req.body.path ?? ""),
         String(req.body.content ?? ""),
         skillActor(req),
-        { encoding: req.body.encoding, executable: req.body.executable },
+        { encoding: req.body.encoding, executable: req.body.executable, expectedVersionId },
       );
 
       const actor = getActorInfo(req);

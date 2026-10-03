@@ -113,11 +113,12 @@ describe("managed install commands", () => {
         const checkout = args[args.indexOf("-C") + 1];
         const packages = [
           { dir: "packages/shared", name: "@paperclipai/shared", packageJson: { name: "@paperclipai/shared", version: "0.3.1" } },
-          { dir: "packages/db", name: "@paperclipai/db", packageJson: { name: "@paperclipai/db", version: "0.3.1", dependencies: { "@paperclipai/shared": "workspace:*" }, bundleDependencies: ["embedded-postgres"], ...(bundledNeedsUiDist ? { files: ["ui-dist"], scripts: { "prepare:ui-dist": "bash ../scripts/prepare-server-ui-dist.sh" } } : {}) } },
+          { dir: "packages/db", name: "@paperclipai/db", packageJson: { name: "@paperclipai/db", version: "0.3.1", dependencies: { "@paperclipai/shared": "workspace:*" }, bundleDependencies: ["embedded-postgres"], ...(bundledNeedsUiDist ? { files: ["ui-dist", "skills"], scripts: { "prepare:ui-dist": "bash ../scripts/prepare-server-ui-dist.sh" } } : {}) } },
           { dir: "server", name: "@paperclipai/server", packageJson: { name: "@paperclipai/server", version: "0.3.1", dependencies: { "@paperclipai/db": "workspace:*" } } },
         ];
         fs.mkdirSync(path.join(checkout, "cli"), { recursive: true });
         fs.writeFileSync(path.join(checkout, "cli", "package.json"), JSON.stringify({ version: "0.3.1" }));
+        fs.mkdirSync(path.join(checkout, "skills", "paperclip"), { recursive: true });
         fs.mkdirSync(path.join(checkout, "scripts"), { recursive: true });
         fs.writeFileSync(path.join(checkout, "scripts", "release-package-manifest.json"), JSON.stringify(packages.map(({ dir, name }) => ({ dir, name }))));
         for (const workspacePackage of packages) {
@@ -198,7 +199,7 @@ describe("managed install commands", () => {
 
   // Cas vécu : le paquet serveur (bundleDependencies) est empaqueté par prepare-bundled-package.mjs,
   // qui copie `files` sans lancer le prepack ; ui-dist n'existait donc jamais (ENOENT sur rise).
-  it("prepares ui-dist for a bundled package before copying its files", async () => {
+  it("prepares ui-dist and skills for a bundled package before copying its files", async () => {
     const sha = "e".repeat(40);
     const runCommand = createGitCheckoutRunCommand(sha, { bundledNeedsUiDist: true });
     await expect(installGitPayload("paperclipai/paperclip", sha, runCommand, resolveInstallStorePaths())).resolves.toMatchObject({ version: "0.3.1", reused: false });

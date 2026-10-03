@@ -4676,7 +4676,7 @@ export function companySkillService(db: Db) {
     actor: SkillActor | null = null,
     format: { encoding?: "utf8" | "base64"; executable?: boolean; expectedVersionId?: string | null;
       afterUpdate?: (versionId: string | null) => Promise<void>;
-      onRollback?: (restore: () => Promise<void>) => void } = {},
+      onRollback?: (restore: () => Promise<void>, versionId: string | null) => void } = {},
   ): Promise<CompanySkillFileDetail> {
     return withSkillFileMutation(companyId, skillId, async (skill, tx) => {
 
@@ -4707,7 +4707,7 @@ export function companySkillService(db: Db) {
           await fs.chmod(absolutePath, previousMode);
         }
       };
-      format.onRollback?.(restore);
+      format.onRollback?.(restore, skill.currentVersionId);
       const mode = (format.executable ?? Boolean(previousMode & 0o111)) ? 0o755 : 0o644;
       try {
         await fs.mkdir(path.dirname(absolutePath), { recursive: true });

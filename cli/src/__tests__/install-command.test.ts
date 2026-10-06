@@ -205,6 +205,9 @@ describe("managed install commands", () => {
     await expect(installGitPayload("paperclipai/paperclip", sha, runCommand, resolveInstallStorePaths())).resolves.toMatchObject({ version: "0.3.1", reused: false });
     const prepareCall = runCommand.mock.calls.find(([file, args]) => file === "corepack" && args.includes("prepare:ui-dist"));
     expect(prepareCall?.[2]?.env?.PAPERCLIP_RELEASE_REUSE_UI_DIST).toBe("1");
+    // Cas vécu : le prepack du paquet préparé cherche ../scripts/ absent du dossier temporaire (exit 127 sur rise).
+    const packCall = runCommand.mock.calls.find(([file, args]) => file === "npm" && args[0] === "pack" && args[1].includes("workspace-package-"));
+    expect(packCall?.[1]).toContain("--ignore-scripts");
   });
 
   it("resolves the complete server workspace dependency closure in dependency order", () => {

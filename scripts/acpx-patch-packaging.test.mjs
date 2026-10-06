@@ -175,6 +175,17 @@ test("bundled package staging materializes workspace dependency versions", () =>
   });
 });
 
+// Cas vécu : un checkout non estampillé (fork) a plugin-sdk en 1.0.0 et le serveur en 0.3.1 ;
+// le serveur exigeait plugin-sdk@0.3.1, introuvable, et `paperclipai install --repo` échouait en ETARGET.
+test("bundled package staging resolves workspace dependencies to the version of the depended-on package", () => {
+  const staged = materializePublishManifest(
+    { name: "@paperclipai/server", version: "0.3.1", dependencies: { "@paperclipai/plugin-sdk": "workspace:*", "@paperclipai/db": "workspace:^" } },
+    { "@paperclipai/plugin-sdk": "1.0.0" },
+  );
+
+  assert.deepEqual(staged.dependencies, { "@paperclipai/plugin-sdk": "1.0.0", "@paperclipai/db": "^0.3.1" });
+});
+
 test("bundled package staging installs only dependencies included in the tarball", () => {
   const publishManifest = {
     name: "@paperclipai/db",
